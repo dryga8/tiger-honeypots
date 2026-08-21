@@ -386,11 +386,15 @@ window.Game = window.Game || {};
     else if (kind === 'streak') drawStreakIcon(ctx, x, rowY + 5, 4);
   }
 
+  // Раздел 4: у каждого направления две клавиши — стрелка и буква WASD.
+  // Буква стоит рядом со стрелкой, а не отдельной строкой снизу:
+  // между схемой и кнопкой «НАЧАТЬ» свободных пять пикселей, а
+  // раздвигать весь экран ради подсказки — трогать то, что стоит на месте.
   const CONTROLS = [
-    [S.ARROW_LEFT, 'ВЛЕВО'],
-    [S.ARROW_RIGHT, 'ВПРАВО'],
-    [S.ARROW_UP, 'ВВЕРХ'],
-    [S.ARROW_DOWN, 'ВНИЗ'],
+    [S.ARROW_LEFT, 'A', 'ВЛЕВО'],
+    [S.ARROW_RIGHT, 'D', 'ВПРАВО'],
+    [S.ARROW_UP, 'W', 'ВВЕРХ'],
+    [S.ARROW_DOWN, 'S', 'ВНИЗ'],
   ];
 
   // Строка «ТЫ: ИМЯ   СМЕНИТЬ». Имя показываем, только если игрок уже
@@ -455,14 +459,20 @@ window.Game = window.Game || {};
         rule.good ? P.green : P.honey);
     }
 
-    // Схема управления: четыре стрелки с подписями, в два ряда.
+    // Схема управления: четыре стрелки с подписями, в два ряда. Колонки
+    // сдвинуты влево и сближены: каждая строка подросла на букву, и при
+    // прежних координатах блок уехал бы вправо от середины экрана.
     for (let i = 0; i < CONTROLS.length; i++) {
       const arrow = CONTROLS[i][0];
-      const label = CONTROLS[i][1];
-      const x = 64 + (i % 2) * 78;
+      const letter = CONTROLS[i][1];
+      const label = CONTROLS[i][2];
+      const x = 60 + (i % 2) * 76;
       const y = 106 + Math.floor(i / 2) * 12;
       drawSprite(ctx, arrow, x, y);
-      drawText(ctx, label, x + 10, y, P.white);
+      // Буква приглушена: она второй способ, а не равноправная подпись,
+      // и перетягивать внимание со стрелки ей незачем.
+      drawText(ctx, '/' + letter, x + 10, y, P.wood0);
+      drawText(ctx, label, x + 26, y, P.white);
     }
 
     drawButton(ctx, 'start', 'НАЧАТЬ', mid, 130, true);
