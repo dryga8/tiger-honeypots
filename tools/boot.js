@@ -110,8 +110,12 @@ const bootScreen = Game.state.screen;
 let now = 0;
 let failed = false;
 
-function key(k) {
-  for (const fn of listeners.keydown || []) fn({ key: k, repeat: false, preventDefault() {} });
+// code нужен для WASD: игра смотрит на место клавиши, а не на букву,
+// чтобы управление работало в любой раскладке.
+function key(k, code) {
+  for (const fn of listeners.keydown || []) {
+    fn({ key: k, code: code, repeat: false, preventDefault() {} });
+  }
 }
 
 // Клик приходит в координатах окна, поэтому логические умножаем на масштаб —
@@ -611,6 +615,83 @@ ok('счёт сброшен, рекорд сохранён',
     Game.Api.submitScore = realSubmit;
     Game.state.sent = -1;
     delete store['honey-hour.sent'];
+  }
+
+  // --- управление WASD ----------------------------------------------------
+  console.log('\nWASD:');
+  {
+    Game.state.screen = 'playing';
+
+    function press(k, code) {
+      key(k, code);
+      step();
+      return Game.state.tiger.side + '/' + Game.state.tiger.level;
+    }
+
+    Game.state.tiger = { side: 'left', level: 'up' };
+    ok('D ведёт вправо', press('d', 'KeyD') === 'right/up');
+    ok('S ведёт вниз', press('s', 'KeyS') === 'right/down');
+    ok('A ведёт влево', press('a', 'KeyA') === 'left/down');
+    ok('W ведёт вверх', press('w', 'KeyW') === 'left/up');
+
+    // Главное ради чего взят code: игра русскоязычная, и у большинства
+    // игроков раскладка будет русской. По букве управление у них бы
+    // просто не работало.
+    Game.state.tiger = { side: 'left', level: 'up' };
+    ok('на русской раскладке тоже (в = KeyD)', press('в', 'KeyD') === 'right/up');
+    ok('и ы = KeyS', press('ы', 'KeyS') === 'right/down');
+    ok('и ф = KeyA', press('ф', 'KeyA') === 'left/down');
+    ok('и ц = KeyW', press('ц', 'KeyW') === 'left/up');
+
+    // Стрелки от этого не пострадали.
+    ok('стрелки работают как работали',
+      press('ArrowRight', 'ArrowRight') === 'right/up');
+
+    // Автоповтор удержания — не новое нажатие, как и у стрелок.
+    Game.state.tiger = { side: 'right', level: 'up' };
+    for (const fn of listeners.keydown || []) {
+      fn({ key: 'a', code: 'KeyA', repeat: true, preventDefault() {} });
+    }
+    step();
+    ok('автоповтор не считается нажатием',
+      Game.state.tiger.side === 'right');
+
+    // На экране имени те же клавиши обязаны печатать буквы, а не
+    // двигать тигра — ровно та же развилка, что уже есть у M/Ь.
+    const keptScreen = Game.state.screen;
+    const keptTiger = Game.state.tiger.side;
+    Game.state.screen = 'name';
+    Game.Profile.beginEdit();
+    Game.Profile.draft.name = '';
+    key('w', 'KeyW');
+    key('a', 'KeyA');
+    step();
+    ok('на экране имени W и A — буквы',
+      Game.Profile.draft.name === 'WA');
+    ok('и тигра они при этом не двигают',
+      Game.state.tiger.side === keptTiger);
+    Game.state.screen = keptScreen;
+  }
+
+  // --- буква Й --------------------------------------------------------
+  console.log('\nшрифт:');
+  {
+    const Й = Game.font.glyphs['Й'];
+    const А = Game.font.glyphs['А'];
+    const И = Game.font.glyphs['И'];
+
+    ok('Й есть и ровно в семь строк', Й && Й.length === 7);
+    // Раньше верх Й совпадал с верхом А буквально — оттого и читалась
+    // как А. Двух одинаковых верхних строк быть больше не должно.
+    ok('верх Й больше не совпадает с верхом А',
+      !(Й[0] === А[0] && Й[1] === А[1]));
+    // Черточка уже, чем крыша А.
+    const ширина = (строка) => (строка.match(/#/g) || []).length;
+    ok('черточка уже крыши А', ширина(Й[0]) < ширина(А[0]));
+    // Под черточкой должна остаться узнаваемая И: шесть нижних строк Й
+    // — это И без одной из двух одинаковых верхних.
+    ok('под черточкой — настоящая И',
+      Й.slice(1).join('|') === И.slice(1).join('|'));
   }
 
   // --- длинный случайный прогон --------------------------------------------
