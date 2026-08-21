@@ -48,9 +48,14 @@ let rafQueue = [];
 // поэтому проверяем именно то, что игра пишет и читает (раздел 14).
 const store = {};
 
+// Заглушка документа умеет подписку и видимость: игра шлёт счёт при уходе
+// со страницы, и без этих двух вещей самую важную отправку не проверить.
+const docListeners = {};
 global.document = {
   getElementById: (id) => (id === 'screen' ? screen : null),
   createElement: (tag) => (tag === 'canvas' ? makeCanvas(1, 1) : {}),
+  visibilityState: 'visible',
+  addEventListener: (name, fn) => { (docListeners[name] = docListeners[name] || []).push(fn); },
 };
 global.window = {
   innerWidth: 1280,
@@ -115,6 +120,17 @@ function click(lx, ly) {
   for (const fn of screen.listeners.click || []) {
     fn({ clientX: lx * VIEW_SCALE, clientY: ly * VIEW_SCALE });
   }
+}
+
+// Свернуть вкладку и развернуть обратно — так браузер сообщает игре, что
+// игрок ушёл, не доиграв.
+function visibility(stateName) {
+  global.document.visibilityState = stateName;
+  for (const fn of docListeners.visibilitychange || []) fn({});
+}
+
+function pagehide() {
+  for (const fn of listeners.pagehide || []) fn({});
 }
 
 function step() {
@@ -485,6 +501,116 @@ ok('счёт сброшен, рекорд сохранён',
       sent[0].score === sent[1].score);
 
     Game.Api.submitScore = realSubmit;
+  }
+
+  // --- игрок ушёл, не доиграв ----------------------------------------------
+  // Главная дыра, из-за которой список игроков был длиннее таблицы рейтинга:
+  // счёт уходил только на гейм-овере, а тот, кто закрыл вкладку посреди
+  // партии, не попадал в таблицу никогда.
+  console.log('\nотправка при уходе со страницы:');
+  {
+    const sent = [];
+    const realSubmit = Game.Api.submitScore;
+    // Здесь нужен принимающий сервер, а не молчащий: проверяем в том числе
+    // память о принятом счёте, а она пополняется только по ответу 'ok'.
+    Game.Api.submitScore = function (name, pin, score, ms, keepalive) {
+      sent.push({ score: score, ms: ms, keepalive: keepalive });
+      return Promise.resolve({ ok: true, data: 'ok' });
+    };
+    Game.state.sent = -1;
+    // Рекорд предыдущего блока здесь мешает: возврат на вкладку честно досылает
+    // его, а здесь проверяется другое — путь незаконченной партии.
+    Game.state.best = 0;
+    Game.state.bestMs = 0;
+    Game.state.playedMs = 0;
+
+    // Партия идёт: 47 очков за 60 секунд, гейм-овера не будет.
+    Game.state.screen = 'playing';
+    Game.state.score = 47;
+    Game.state.startedAt = Date.now() - 60000;
+
+    visibility('hidden');
+    await settle();
+    ok('свёрнутая вкладка отправляет счёт незаконченной партии',
+      sent.length === 1 && sent[0].score === 47);
+    ok('с настоящей длительностью, а не выдуманной',
+      sent[0].ms >= 60000 && sent[0].ms < 65000);
+    ok('запрос помечен keepalive, иначе браузер порвёт его на выходе',
+      sent[0].keepalive === true);
+    ok('принятый счёт запомнен в хранилище',
+      parseInt(store['honey-hour.sent'], 10) === 47);
+
+    // Повтор того же самого сервер уже принял — второй раз слать нечего,
+    // иначе сгорит кулдаун, а под отказ попадёт следующий настоящий рекорд.
+    visibility('visible');
+    visibility('hidden');
+    await settle();
+    ok('уже принятый счёт второй раз не отправляется', sent.length === 1);
+
+    // А выросший — отправляется.
+    Game.state.score = 61;
+    visibility('hidden');
+    await settle();
+    ok('выросший счёт отправляется', sent.length === 2 && sent[1].score === 61);
+
+    // Закрытие вкладки — второе событие, ловим и его: ни одно не срабатывает
+    // во всех браузерах.
+    Game.state.score = 75;
+    pagehide();
+    await settle();
+    ok('закрытие вкладки тоже отправляет счёт',
+      sent.length === 3 && sent[2].score === 75);
+
+    // Ноль — законный результат сыгранной партии, а не «нечего слать»:
+    // игрок, не поймавший ничего, обязан попасть в таблицу со своим нулём.
+    Game.state.sent = -1;
+    Game.state.score = 0;
+    Game.state.startedAt = Date.now() - 9000;
+    pagehide();
+    await settle();
+    ok('нулевой счёт сыгранной партии тоже уходит в таблицу',
+      sent.length === 4 && sent[3].score === 0);
+
+    // А вот партии нулевой длительности не бывает: играть ещё не начинали,
+    // и выдумывать результат неоткуда.
+    Game.state.sent = -1;
+    Game.state.screen = 'onboarding';
+    Game.state.best = 0;
+    Game.state.bestMs = 0;
+    Game.state.playedMs = 0;
+    pagehide();
+    await settle();
+    ok('без сыгранной партии не отправляется ничего', sent.length === 4);
+
+    // Смена имени — другой игрок, и память о принятом счёте обязана
+    // обнулиться. Иначе у нового имени результат ниже чужого
+    // запомненного не уйдёт вовсе, и игрок снова окажется в списке
+    // игроков без строки в рейтинге.
+    // Имя придётся вернуть: дальше проверяется, что профиль переживает
+    // перезагрузку, а этот блок его меняет.
+    const keptName = Game.Profile.profile.name;
+    const keptPin = Game.Profile.profile.pin;
+
+    Game.state.sent = 140;
+    Game.Profile.draft.name = 'ДРУГОЙ ТИГР';
+    Game.Profile.draft.pin = '4321';
+    Game.Profile.commit();
+    ok('смена имени сбрасывает память о принятом счёте',
+      Game.state.sent === -1);
+
+    // То же самое имя повторно — игрок тот же, терять память незачем.
+    Game.state.sent = 140;
+    Game.Profile.commit();
+    ok('повторный ввод того же имени память не трогает',
+      Game.state.sent === 140);
+
+    Game.Profile.draft.name = keptName;
+    Game.Profile.draft.pin = keptPin;
+    Game.Profile.commit();
+
+    Game.Api.submitScore = realSubmit;
+    Game.state.sent = -1;
+    delete store['honey-hour.sent'];
   }
 
   // --- длинный случайный прогон --------------------------------------------

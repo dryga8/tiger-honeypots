@@ -145,7 +145,19 @@ window.Game = window.Game || {};
 
   function commit() {
     if (!draftValid()) return false;
-    profile.name = normalizeName(draft.name);
+    const next = normalizeName(draft.name);
+
+    // Другое имя — другой игрок. Память о том, какой счёт сервер уже
+    // принял, относилась к прежнему аккаунту, и переносить её нельзя:
+    // иначе у нового имени результат ниже запомненного вообще не уйдёт
+    // в таблицу, и игрок снова окажется в списке игроков без строки
+    // в рейтинге — ровно та, болезнь, ради которой память заводилась.
+    if (next !== profile.name) {
+      Game.state.sent = -1;
+      Game.Storage.saveSent(-1);
+    }
+
+    profile.name = next;
     profile.pin = draft.pin;
     draft.name = profile.name;
     Game.Storage.saveProfile(profile.name, profile.pin);

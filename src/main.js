@@ -178,9 +178,38 @@ window.Game = window.Game || {};
     requestAnimationFrame(frame);
   }
 
+  // --- Отправка счёта при уходе со страницы -------------------------------
+  // Гейм-овера может и не быть: игрок закрывает вкладку, сворачивает браузер,
+  // переключается на другое приложение посреди партии. Раньше такой игрок не
+  // попадал в рейтинг вовсе — заводился в списке игроков и оставался без
+  // строки с результатом. Ловим оба события, потому что ни одно не
+  // срабатывает везде: `pagehide` надёжнее при закрытии вкладки, а на
+  // мобильных браузерах уход в фон часто даёт только `visibilitychange`.
+  //
+  // Возврат на вкладку — тоже повод: если предыдущая отправка не дошла,
+  // здесь она уйдёт снова, и это бесплатно.
+  function watchLeaving() {
+    window.addEventListener('pagehide', function () {
+      Game.syncLeaving();
+    });
+
+    // `visibilitychange` браузер шлёт в document; в прогоне tools/boot.js
+    // документ — заглушка без подписки, поэтому проверяем, а не надеемся.
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') Game.syncLeaving();
+        else Game.syncBest();
+      });
+    }
+  }
+
   function start() {
     Game.state.best = Game.Storage.loadBest();
     Game.state.bestMs = Game.Storage.loadBestMs();
+    // Что из этого сервер уже принял. Без этой памяти запуск переотправлял
+    // рекорд, который в таблице и так стоит, и сжигал кулдаун `too_fast` —
+    // а под отказ попадал следующий, настоящий рекорд.
+    Game.state.sent = Game.Storage.loadSent();
 
     // Экран имени показывается один раз: если игрок уже представился, сразу
     // онбординг. Второй вход туда — только по «СМЕНИТЬ».
@@ -196,6 +225,7 @@ window.Game = window.Game || {};
 
     Game.Sound.init();
     Game.Input.init(canvas);
+    watchLeaving();
     fitScale();
     window.addEventListener('resize', fitScale);
     requestAnimationFrame(frame);

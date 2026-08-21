@@ -29,7 +29,11 @@ window.Game = window.Game || {};
 
   // Общий вызов RPC. Возвращает { ok: true, data } либо { ok: false, error }.
   // Исключений не бросает никогда — это контракт модуля.
-  async function rpc(fn, params) {
+  //
+  // keepalive: запрос должен пережить закрытие вкладки. Браузер обычно рвёт
+  // всё незавершённое при уходе со страницы, и отправка счёта на выходе
+  // пропала бы именно тогда, когда она нужнее всего.
+  async function rpc(fn, params, keepalive) {
     // В node-заглушках (tools/) fetch нет вовсе: там это не ошибка, а ровно
     // тот режим «без сети», который игра обязана переживать.
     if (typeof fetch !== 'function') return { ok: false, error: 'no-fetch' };
@@ -45,6 +49,7 @@ window.Game = window.Game || {};
         headers: headers(),
         body: JSON.stringify(params),
         signal: ctrl ? ctrl.signal : undefined,
+        keepalive: keepalive === true,
       });
 
       if (!res.ok) {
@@ -74,14 +79,14 @@ window.Game = window.Game || {};
   // В лог идёт и то, что отправили. Без этого разбирать расхождения между
   // счётом на экране и счётом в рейтинге приходится вслепую: по одному слову
   // «ok» не видно, какое число ушло на сервер.
-  async function submitScore(name, pin, score, playedMs) {
+  async function submitScore(name, pin, score, playedMs, keepalive) {
     const sent = score + ' очков за ' + Math.round(playedMs / 1000) + ' с';
     const res = await rpc('submit_score', {
       p_name: name,
       p_pin: pin,
       p_score: score,
       p_played_ms: playedMs,
-    });
+    }, keepalive);
     if (res.ok) {
       // 'ok' — сервер принял. Всё остальное он вернул как отказ, и это стоит
       // отличать: «отправлено» и «зачтено» — разные вещи.

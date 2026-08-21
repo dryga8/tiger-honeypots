@@ -10,6 +10,13 @@ window.Game = window.Game || {};
   // можно было переотправить в рейтинг: сервер проверяет счёт на
   // правдоподобие по времени, и выдумывать время нельзя.
   const KEY_BEST_MS = 'honey-hour.bestMs';
+  // Счёт, который сервер **принял** (ответил 'ok'). Нужен, чтобы не слать
+  // впустую то, что в таблице уже стоит: у сервера кулдаун после каждой
+  // принятой отправки, и тратить его на повтор известного числа — значит
+  // подставить следующий настоящий рекорд под отказ 'too_fast'.
+  // -1 означает «мы ещё ничего не отправляли», и это не то же самое, что 0:
+  // ноль — законный результат партии, в которой игрок не поймал ничего.
+  const KEY_SENT = 'honey-hour.sent';
   const KEY_MUTED = 'honey-hour.muted';
   // Имя и ПИН игрока. Ключи с тем же префиксом, что и рекорд: хранилище одно,
   // и по префиксу видно, чьё оно. Сети пока нет — всё лежит локально.
@@ -40,6 +47,24 @@ window.Game = window.Game || {};
     try {
       window.localStorage.setItem(KEY, String(score));
       if (playedMs > 0) window.localStorage.setItem(KEY_BEST_MS, String(playedMs));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function loadSent() {
+    try {
+      const n = parseInt(window.localStorage.getItem(KEY_SENT), 10);
+      return Number.isFinite(n) && n >= 0 ? n : -1;
+    } catch (e) {
+      return -1;
+    }
+  }
+
+  function saveSent(score) {
+    try {
+      window.localStorage.setItem(KEY_SENT, String(score));
       return true;
     } catch (e) {
       return false;
@@ -89,6 +114,7 @@ window.Game = window.Game || {};
 
   Game.Storage = {
     loadBest, loadBestMs, saveBest,
+    loadSent, saveSent,
     loadMuted, saveMuted,
     loadProfile, saveProfile,
   };
