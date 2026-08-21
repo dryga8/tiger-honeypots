@@ -67,6 +67,7 @@ window.Game = window.Game || {};
     lives: LIVES_START, // в полусердцах, 0..10
     streak: 0,          // зелёных подряд, 0..9 (на 10 срабатывает и обнуляется)
     best: 0,            // рекорд из localStorage, грузится при старте (main.js)
+    bestMs: 0,          // длительность партии, в которой поставлен рекорд
     newRecord: false,   // рекорд побит в этой партии — отдельная подпись
     startedAt: 0,       // Date.now() на старте партии
     playedMs: 0,        // длительность партии, мс; уходит в submit_score
@@ -131,24 +132,45 @@ window.Game = window.Game || {};
     state.playedMs = Math.max(0, Date.now() - state.startedAt);
 
     // Локальный рекорд пишется всегда и первым: он не зависит от сети и
-    // показывается на онбординге мгновенно.
+    // показывается на онбординге мгновенно. Вместе с рекордом запоминаем
+    // длительность той партии, в которой он поставлен.
     if (state.score > state.best) {
       state.best = state.score;
+      state.bestMs = state.playedMs;
       state.newRecord = true;
-      Game.Storage.saveBest(state.best);
+      Game.Storage.saveBest(state.best, state.bestMs);
     } else {
       state.newRecord = false;
     }
 
-    // Счёт уходит в рейтинг молча и не блокируя: ни ждать ответа, ни
-    // показывать ошибку игроку не нужно — всё, что пошло не так, в консоли.
-    if (Game.Profile.hasProfile()) {
-      Game.Api.submitScore(
-        Game.Profile.profile.name,
-        Game.Profile.profile.pin,
-        state.score,
-        state.playedMs
-      );
+    syncBest();
+  }
+
+  // Отправка результата в рейтинг: молча и не блокируя, всё что пошло не так —
+  // в консоли.
+  //
+  // В рейтинг уходит **рекорд игрока**, а не последняя партия. Сервер хранит
+  // максимум, поэтому отправлять худший результат бессмысленно, а отправлять
+  // рекорд — вдобавок самовосстанавливающе: если отправка не дошла (сеть
+  // моргнула, сервер ответил отказом, играли вообще без сети), следующий же
+  // гейм-овер пошлёт тот же рекорд заново, и он всё-таки встанет в таблицу.
+  //
+  // Длительность берётся от той партии, в которой рекорд поставлен: сервер
+  // проверяет счёт на правдоподобие по времени, и пара «счёт + время» обязана
+  // быть настоящей.
+  function syncBest() {
+    if (!Game.Profile.hasProfile()) return;
+
+    const name = Game.Profile.profile.name;
+    const pin = Game.Profile.profile.pin;
+
+    if (state.best > 0 && state.bestMs > 0) {
+      Game.Api.submitScore(name, pin, state.best, state.bestMs);
+    } else if (state.playedMs > 0) {
+      // Рекорд из старых версий сохранён без длительности. Придумывать её
+      // нельзя, поэтому отправляем то, что знаем достоверно, — только что
+      // сыгранную партию. Как только игрок побьёт рекорд, время запишется.
+      Game.Api.submitScore(name, pin, state.score, state.playedMs);
     }
   }
 
@@ -265,6 +287,7 @@ window.Game = window.Game || {};
   Game.advanceScreen = advanceScreen;
   Game.gotoName = gotoName;
   Game.gotoOnboarding = gotoOnboarding;
+  Game.syncBest = syncBest;
   Game.gotoRating = gotoRating;
   Game.closeRating = closeRating;
   Game.moveTiger = moveTiger;

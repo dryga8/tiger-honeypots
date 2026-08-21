@@ -448,6 +448,45 @@ ok('счёт сброшен, рекорд сохранён',
   await settle();
   ok('отправка счёта без сети игру не роняет', Game.state.screen === 'gameover');
 
+  // --- в рейтинг уходит рекорд, а не последняя партия ----------------------
+  console.log('\nрекорд в рейтинге:');
+  {
+    const sent = [];
+    const realSubmit = Game.Api.submitScore;
+    Game.Api.submitScore = function (name, pin, score, ms) {
+      sent.push({ score: score, ms: ms });
+      return realSubmit.apply(null, arguments);
+    };
+
+    // Партия с рекордом.
+    Game.state.best = 0;
+    Game.state.bestMs = 0;
+    Game.state.score = 120;
+    Game.state.startedAt = Date.now() - 90000;
+    Game.endGame();
+    await settle();
+    ok('рекорд уходит в рейтинг', sent.length === 1 && sent[0].score === 120);
+    ok('вместе с длительностью той партии, где он поставлен',
+      sent[0].ms >= 90000 && sent[0].ms < 95000);
+    ok('длительность рекорда легла в хранилище',
+      parseInt(store['honey-hour.bestMs'], 10) >= 90000);
+
+    // Слабая партия следом: в таблицу всё равно должен уйти рекорд, иначе
+    // одна неудачная игра стирала бы достижение из рейтинга.
+    Game.state.score = 30;
+    Game.state.startedAt = Date.now() - 20000;
+    Game.endGame();
+    await settle();
+    ok('слабая партия повторяет рекорд, а не шлёт свой счёт',
+      sent.length === 2 && sent[1].score === 120 && sent[1].ms >= 90000);
+
+    // Пропавшая отправка чинится сама: следующий гейм-овер шлёт тот же рекорд.
+    ok('каждый гейм-овер пересылает рекорд заново (самопочинка)',
+      sent[0].score === sent[1].score);
+
+    Game.Api.submitScore = realSubmit;
+  }
+
   // --- длинный случайный прогон --------------------------------------------
   console.log('\nдлинный прогон:');
   const DIRS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];

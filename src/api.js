@@ -70,14 +70,24 @@ window.Game = window.Game || {};
 
   // submit_score -> 'ok' | 'bad_pin' | 'impossible' | 'too_fast'
   // Отправляется молча: результат нужен только в консоли, игроку — нет.
+  //
+  // В лог идёт и то, что отправили. Без этого разбирать расхождения между
+  // счётом на экране и счётом в рейтинге приходится вслепую: по одному слову
+  // «ok» не видно, какое число ушло на сервер.
   async function submitScore(name, pin, score, playedMs) {
+    const sent = score + ' очков за ' + Math.round(playedMs / 1000) + ' с';
     const res = await rpc('submit_score', {
       p_name: name,
       p_pin: pin,
       p_score: score,
       p_played_ms: playedMs,
     });
-    if (res.ok) console.log('[рейтинг] счёт отправлен: ' + res.data);
+    if (res.ok) {
+      // 'ok' — сервер принял. Всё остальное он вернул как отказ, и это стоит
+      // отличать: «отправлено» и «зачтено» — разные вещи.
+      const verdict = res.data === 'ok' ? 'зачтено' : 'ОТКЛОНЕНО (' + res.data + ')';
+      console.log('[рейтинг] ' + sent + ' -> ' + verdict);
+    }
     return res;
   }
 

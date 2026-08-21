@@ -6,6 +6,10 @@ window.Game = window.Game || {};
 
 (function (Game) {
   const KEY = 'honey-hour.best';
+  // Длительность партии, в которой поставлен рекорд. Нужна, чтобы рекорд
+  // можно было переотправить в рейтинг: сервер проверяет счёт на
+  // правдоподобие по времени, и выдумывать время нельзя.
+  const KEY_BEST_MS = 'honey-hour.bestMs';
   const KEY_MUTED = 'honey-hour.muted';
   // Имя и ПИН игрока. Ключи с тем же префиксом, что и рекорд: хранилище одно,
   // и по префиксу видно, чьё оно. Сети пока нет — всё лежит локально.
@@ -23,9 +27,19 @@ window.Game = window.Game || {};
     }
   }
 
-  function saveBest(score) {
+  function loadBestMs() {
+    try {
+      const n = parseInt(window.localStorage.getItem(KEY_BEST_MS), 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function saveBest(score, playedMs) {
     try {
       window.localStorage.setItem(KEY, String(score));
+      if (playedMs > 0) window.localStorage.setItem(KEY_BEST_MS, String(playedMs));
       return true;
     } catch (e) {
       return false;
@@ -73,5 +87,9 @@ window.Game = window.Game || {};
     }
   }
 
-  Game.Storage = { loadBest, saveBest, loadMuted, saveMuted, loadProfile, saveProfile };
+  Game.Storage = {
+    loadBest, loadBestMs, saveBest,
+    loadMuted, saveMuted,
+    loadProfile, saveProfile,
+  };
 })(window.Game);

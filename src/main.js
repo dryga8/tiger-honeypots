@@ -180,11 +180,19 @@ window.Game = window.Game || {};
 
   function start() {
     Game.state.best = Game.Storage.loadBest();
+    Game.state.bestMs = Game.Storage.loadBestMs();
 
     // Экран имени показывается один раз: если игрок уже представился, сразу
     // онбординг. Второй вход туда — только по «СМЕНИТЬ».
-    if (Game.Profile.load()) Game.gotoOnboarding();
-    else Game.gotoName();
+    if (Game.Profile.load()) {
+      Game.gotoOnboarding();
+      // Рекорд мог быть поставлен без сети и не дойти до рейтинга. Пробуем
+      // дослать его при запуске: сервер хранит максимум, так что повторная
+      // отправка того же результата ничего не портит.
+      Game.syncBest();
+    } else {
+      Game.gotoName();
+    }
 
     Game.Sound.init();
     Game.Input.init(canvas);
