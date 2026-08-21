@@ -55,6 +55,9 @@ window.Game = window.Game || {};
       case Game.SCREENS.GAMEOVER:
         Game.renderGameover(ctx, buttonEnabled(now));
         break;
+      case Game.SCREENS.RATING:
+        Game.renderRating(ctx);
+        break;
     }
   }
 
@@ -70,13 +73,34 @@ window.Game = window.Game || {};
       if (ev.action === 'backspace') Profile.backspace();
       else Profile.nextField();
     } else if (ev.type === 'confirm' && ev.key === 'Enter') {
-      if (Profile.submit()) Game.gotoOnboarding();
+      // submit() асинхронный: сам переведёт экран, когда ответит сервер.
+      Profile.submit();
+    } else if (ev.type === 'back') {
+      // Esc отменяет смену имени — но только если игроку есть куда вернуться.
+      // На первом заходе профиля ещё нет, и уходить с экрана некуда.
+      if (Profile.hasProfile() && Profile.draft.status !== 'checking') {
+        Game.gotoOnboarding();
+      }
     } else if (ev.type === 'click') {
       const hit = Game.hitButton(ev.x, ev.y);
       if (hit === 'field-name') Profile.focusField('name');
       else if (hit === 'field-pin') Profile.focusField('pin');
-      else if (hit === 'go') { if (Profile.commit()) Game.gotoOnboarding(); }
+      else if (hit === 'go') Profile.submit();
       else if (hit === 'sound') Game.Sound.toggle();
+    }
+  }
+
+  // Рейтинг: на экране одна кнопка, поэтому и Esc, и подтверждение, и клик
+  // по «НАЗАД» делают одно и то же — возвращают туда, откуда пришли.
+  function handleRatingEvent(ev) {
+    if (ev.type === 'back' || ev.type === 'confirm') {
+      Game.closeRating();
+    } else if (ev.type === 'click') {
+      const hit = Game.hitButton(ev.x, ev.y);
+      if (hit === 'back') Game.closeRating();
+      else if (hit === 'sound') Game.Sound.toggle();
+    } else if (ev.type === 'sound') {
+      Game.Sound.toggle();
     }
   }
 
@@ -97,7 +121,7 @@ window.Game = window.Game || {};
       if (hit === 'sound') {
         Game.Sound.toggle(); // отключение звука работает и во время паузы
       } else if (hit === 'rating') {
-        Game.showSoon();     // рейтинга ещё нет — отвечаем «СКОРО»
+        Game.gotoRating();
       } else if (hit === 'change') {
         Game.gotoName();
       } else if (hit === 'start' && buttonEnabled(now)) {
@@ -143,12 +167,12 @@ window.Game = window.Game || {};
 
     for (const ev of events) {
       if (Game.state.screen === Game.SCREENS.NAME) handleNameEvent(ev);
+      else if (Game.state.screen === Game.SCREENS.RATING) handleRatingEvent(ev);
       else handleGameEvent(ev, now);
     }
 
     // Эффекты живут в кадрах, а не в тиках (разделы 5, 6).
     Game.stepFx();
-    Game.tickUI();
 
     render(now);
     requestAnimationFrame(frame);

@@ -6,6 +6,7 @@
 //   { type:'sound' }               M / Ь
 //   { type:'char', ch }            печатный символ (экран имени)
 //   { type:'edit', action }        'backspace' | 'tab' (экран имени)
+//   { type:'back' }                Esc
 //   { type:'click', x, y }
 //
 // Ввод текста не отдельный режим ввода, а дополнительный поток событий:
@@ -53,6 +54,13 @@ window.Game = window.Game || {};
       } else {
         events.push({ type: 'dir', dir: name });
       }
+    }
+
+    // Esc — «назад»: уйти с рейтинга, отменить смену имени.
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      e.preventDefault();
+      events.push({ type: 'back' });
+      return;
     }
 
     // Backspace иначе уводит со страницы назад, Tab — на адресную строку.

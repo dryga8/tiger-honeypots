@@ -7,11 +7,27 @@ window.Game = window.Game || {};
   const WINDOW_INTERVAL = 2; // тиков между спавн-окнами (пауза между волнами)
   const BAIT_DELAY = 2;      // выманивание: зелёный через 2 тика после красного
 
+  // Минимальный интервал между вилками, в спавн-окнах.
+  //
+  // Одного веса мало. Частота вилок растёт по ходу партии сама, и растёт
+  // круто: к 80 очкам в них терялось 12% всех зелёных против 1% в начале.
+  // Складываются три вещи, и ни одна из них про вилку: вероятность паттерна
+  // ползёт до потолка 0.55, лимит ханипотов растёт с 3 до 5 (вилке нужно два
+  // свободных места — рано она часто не влезала и подменялась одиночкой,
+  // поздно проходит всегда), а тик ускоряется до 230 мс. Вес против этого
+  // бессилен: он-то постоянный.
+  //
+  // Интервал же бьёт именно туда, где больно: в ранней игре вилки и так
+  // редки и до него не достают, а в поздней он ставит потолок частоты.
+  const FORK_GAP = 14;
+
   let cooldown = 0;
+  let forkCooldown = 0;
   let scheduled = []; // отложенные спавны: { at, chute, type }
 
   function reset() {
     cooldown = 0;
+    forkCooldown = 0;
     scheduled = [];
   }
 
@@ -68,7 +84,7 @@ window.Game = window.Game || {};
 
   // Вилка: два зелёных, разрешающихся в один тик на разных желобах.
   function spawnFork(free, score) {
-    // Нужно два свободных желоба и место в лимите под оба горшочка.
+    // Нужно два свободных желоба и место в лимите под оба ханипота.
     if (free.length < 2 || Game.state.pots.length + 2 > maxPots(score)) {
       return spawnSingle(free, score);
     }
@@ -77,6 +93,9 @@ window.Game = window.Game || {};
     const b = pick(rest);
     Game.addPot(a, 'green');
     Game.addPot(b, 'green');
+    // Интервал заводится только на состоявшейся вилке: если её подменили
+    // одиночкой (выше), запирать следующую не за что.
+    forkCooldown = FORK_GAP;
   }
 
   // Развилка внимания: красный и зелёный одновременно на противоположных
@@ -144,7 +163,12 @@ window.Game = window.Game || {};
   }
 
   function choosePattern(score) {
-    const eligible = PATTERNS.filter((p) => score >= p.unlock);
+    const eligible = PATTERNS.filter(function (p) {
+      if (score < p.unlock) return false;
+      // Вилка выбывает из жеребьёвки, пока не выдержан интервал.
+      if (p.spawn === spawnFork && forkCooldown > 0) return false;
+      return true;
+    });
     if (eligible.length > 0 && Math.random() < patternProb(score)) {
       return pickWeighted(eligible);
     }
@@ -177,6 +201,10 @@ window.Game = window.Game || {};
 
     const free = freeChutes();
     if (free.length === 0) return;
+
+    // Интервал между вилками считается в спавн-окнах, а не в тиках: важно,
+    // сколько волн прошло, а не сколько времени — время-то сжимается.
+    if (forkCooldown > 0) forkCooldown -= 1;
 
     choosePattern(st.score)(free, st.score);
     cooldown = WINDOW_INTERVAL;

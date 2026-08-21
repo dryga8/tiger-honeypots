@@ -97,7 +97,9 @@ load('palette.js');
   load('backdrop.js');
 load('sprites.js');
 load('storage.js');
+  load('api.js');
   load('profile.js');
+  load('leaderboard.js');
 load('sound.js');
 load('state.js');
 load('render.js');
@@ -197,6 +199,48 @@ if (ALL) {
   Game.Profile.draft.field = 'pin';
   const nameTyping = screenShot((c) => Game.renderName(c, true));
 
+  // Ответ сервера «имя занято»: подсветка поля и сообщение на двух строках.
+  Game.Profile.draft.pin = '4271';
+  Game.Profile.draft.status = 'bad';
+  Game.Profile.draft.badField = 'name';
+  Game.Profile.draft.field = 'name';
+  Game.Profile.draft.message = ['ТАКОЙ ТИГР УЖЕ ЕСТЬ В ИГРЕ,', 'ПРИДУМАЙ ДРУГОЕ ИМЯ'];
+  const nameTaken = screenShot((c) => Game.renderName(c, false));
+
+  // Запрос в пути: кнопка глухая и говорит, чего ждём.
+  Game.Profile.draft.status = 'checking';
+  Game.Profile.draft.badField = null;
+  Game.Profile.draft.message = [];
+  const nameChecking = screenShot((c) => Game.renderName(c, false));
+
+  // Рейтинг с данными. Сеть в field.js не трогаем — кладём строки напрямую.
+  Game.Profile.profile.name = 'ПОЛОСАТЫЙ';
+  Game.Profile.profile.pin = '4271';
+  const board = Game.Leaderboard.board;
+  board.status = 'ready';
+  board.rows = [
+    { place: 1, player: 'KATYA', score: 142, isMe: false },
+    { place: 2, player: 'ТИГРИЦА', score: 98, isMe: false },
+    { place: 3, player: 'МУРЗИК', score: 91, isMe: false },
+    { place: 4, player: 'BARSIK 7', score: 88, isMe: false },
+    { place: 5, player: 'ЛАПА', score: 74, isMe: false },
+    { place: 6, player: 'RUSTY', score: 69, isMe: false },
+    { place: 7, player: 'ПОЛОСКА', score: 61, isMe: false },
+    { place: 8, player: 'ТАЙГА', score: 57, isMe: false },
+    { place: 9, player: 'SHERE KHAN', score: 52, isMe: false },
+    { place: 10, player: 'КОТЛЕТА', score: 48, isMe: false },
+  ];
+  board.me = { place: 24, player: 'ПОЛОСАТЫЙ', score: 41, isMe: true };
+  const ratingOut = screenShot((c) => Game.renderRating(c));
+
+  // Тот же рейтинг, но игрок в десятке: отдельной строки «ТЫ:» быть не должно.
+  board.rows[6] = { place: 7, player: 'ПОЛОСАТЫЙ', score: 61, isMe: true };
+  board.me = null;
+  const ratingIn = screenShot((c) => Game.renderRating(c));
+
+  board.status = 'error';
+  const ratingError = screenShot((c) => Game.renderRating(c));
+
   Game.state.best = 128;
   Game.state.score = 47;
   Game.state.newRecord = false;
@@ -205,13 +249,15 @@ if (ALL) {
   Game.state.score = 214;
   Game.state.best = 214;
   Game.state.newRecord = true;
-  Game.showSoon(); // ответ «СКОРО» на кнопке рейтинга
   const gameoverRecord = screenShot((c) => Game.renderGameover(c, true));
 
   screen = sheet([
     onboarding, firstRun,
     nameEmpty, nameTyping,
-    gameoverLocked, gameoverRecord,
+    nameTaken, nameChecking,
+    ratingOut, ratingIn,
+    ratingError, gameoverLocked,
+    gameoverRecord,
   ], 2);
 } else if (BACKDROPS) {
   // Одна и та же сцена со всеми задниками: сравнивать имеет смысл только

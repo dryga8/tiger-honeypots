@@ -10,6 +10,7 @@ window.Game = window.Game || {};
     ONBOARDING: 'onboarding',
     PLAYING: 'playing',
     GAMEOVER: 'gameover',
+    RATING: 'rating',       // таблица результатов; открывается с двух экранов
   };
 
   const CHUTE_COUNT = 4; // 0=верх-лево, 1=низ-лево, 2=верх-право, 3=низ-право
@@ -67,6 +68,8 @@ window.Game = window.Game || {};
     streak: 0,          // зелёных подряд, 0..9 (на 10 срабатывает и обнуляется)
     best: 0,            // рекорд из localStorage, грузится при старте (main.js)
     newRecord: false,   // рекорд побит в этой партии — отдельная подпись
+    startedAt: 0,       // Date.now() на старте партии
+    playedMs: 0,        // длительность партии, мс; уходит в submit_score
     fx,                 // счётчики эффектов, отсчитываются в кадрах
   };
 
@@ -111,6 +114,11 @@ window.Game = window.Game || {};
     state.lives = LIVES_START;
     state.streak = 0;
     state.newRecord = false;
+    // Длительность партии нужна серверу, чтобы отсеивать невозможные счета.
+    // Время берём стенное (Date.now), а не игровое: цикл считает кадры, а
+    // здесь важны реальные секунды.
+    state.startedAt = Date.now();
+    state.playedMs = 0;
     clearFx();
     nextId = 1;
     Game.Spawner.reset();
@@ -120,12 +128,27 @@ window.Game = window.Game || {};
   // в localStorage любым путём, каким бы игра ни закончилась.
   function endGame() {
     state.screen = SCREENS.GAMEOVER;
+    state.playedMs = Math.max(0, Date.now() - state.startedAt);
+
+    // Локальный рекорд пишется всегда и первым: он не зависит от сети и
+    // показывается на онбординге мгновенно.
     if (state.score > state.best) {
       state.best = state.score;
       state.newRecord = true;
       Game.Storage.saveBest(state.best);
     } else {
       state.newRecord = false;
+    }
+
+    // Счёт уходит в рейтинг молча и не блокируя: ни ждать ответа, ни
+    // показывать ошибку игроку не нужно — всё, что пошло не так, в консоли.
+    if (Game.Profile.hasProfile()) {
+      Game.Api.submitScore(
+        Game.Profile.profile.name,
+        Game.Profile.profile.pin,
+        state.score,
+        state.playedMs
+      );
     }
   }
 
@@ -221,6 +244,19 @@ window.Game = window.Game || {};
     state.screen = SCREENS.ONBOARDING;
   }
 
+  // Рейтинг открывается и с онбординга, и с гейм-овера, и возвращает туда же,
+  // откуда пришли, — иначе с гейм-овера игрок терял бы свой результат с глаз.
+  function gotoRating() {
+    if (state.screen === SCREENS.RATING) return;
+    Game.Leaderboard.open(state.screen);
+    state.screen = SCREENS.RATING;
+  }
+
+  function closeRating() {
+    const back = Game.Leaderboard.board.returnTo;
+    state.screen = back === SCREENS.GAMEOVER ? SCREENS.GAMEOVER : SCREENS.ONBOARDING;
+  }
+
   Game.SCREENS = SCREENS;
   Game.CHUTE_COUNT = CHUTE_COUNT;
   Game.STEP_COUNT = STEP_COUNT;
@@ -229,6 +265,8 @@ window.Game = window.Game || {};
   Game.advanceScreen = advanceScreen;
   Game.gotoName = gotoName;
   Game.gotoOnboarding = gotoOnboarding;
+  Game.gotoRating = gotoRating;
+  Game.closeRating = closeRating;
   Game.moveTiger = moveTiger;
   Game.endGame = endGame;
   Game.stepFx = stepFx;

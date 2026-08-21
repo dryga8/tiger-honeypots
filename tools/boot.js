@@ -64,9 +64,32 @@ global.window = {
 };
 global.requestAnimationFrame = global.window.requestAnimationFrame;
 
+// Сеть в прогоне отключена намеренно, по двум причинам. Первая: проверять
+// надо именно режим «без сети» — он обязателен по ТЗ, а живой сервер сделал
+// бы прогон недетерминированным. Вторая и более важная: прогон доигрывает
+// сотни партий, и без заглушки каждая улетала бы в настоящий рейтинг
+// мусорным счётом. В node (18+) свой глобальный fetch, так что молчание
+// само собой не получится — его надо поставить руками.
+global.fetch = function () {
+  return Promise.reject(new Error('сеть отключена в прогоне'));
+};
+
+// Жалобы api.js на отсутствие сети ожидаемы — считаем их, но не печатаем,
+// иначе они зальют вывод. Всё остальное пропускаем как есть.
+let netWarnings = 0;
+const realWarn = console.warn;
+console.warn = function () {
+  if (typeof arguments[0] === 'string' && arguments[0].indexOf('[рейтинг]') === 0) {
+    netWarnings += 1;
+    return;
+  }
+  realWarn.apply(console, arguments);
+};
+
 // --- загрузка в порядке index.html ---------------------------------------
 const ORDER = [
-  'palette.js', 'backdrop.js', 'sprites.js', 'storage.js', 'profile.js', 'sound.js', 'input.js',
+  'palette.js', 'backdrop.js', 'sprites.js', 'api.js', 'storage.js', 'profile.js',
+  'leaderboard.js', 'sound.js', 'input.js',
   'state.js', 'spawner.js', 'render.js', 'main.js',
 ];
 for (const f of ORDER) {
@@ -256,171 +279,252 @@ ok('после паузы пробел начинает новую партию'
 ok('счёт сброшен, рекорд сохранён',
   Game.state.score === 0 && Game.state.best === 42);
 
-// --- экран имени ----------------------------------------------------------
-console.log('\nэкран имени:');
+// --- дальше — проверки, которым нужно дождаться промисов -------------------
+// Экран имени и рейтинг ходят на сервер. В заглушках `fetch` нет вовсе, и это
+// не изъян теста, а ровно тот режим, который игра обязана переживать: сети
+// нет — играем дальше. Поэтому весь хвост прогона асинхронный.
+(async function () {
+  // Дать отработать всем накопившимся промисам.
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-ok('первый заход открывает экран имени', bootScreen === 'name');
+  console.log('\nэкран имени:');
 
-Game.Input.consume();
-Game.gotoName();
-step();
-ok('при входе в фокусе поле имени', Game.Profile.draft.field === 'name');
-ok('кнопка ВПЕРЁД! нарисована', !!btn('go'));
+  ok('первый заход открывает экран имени', bootScreen === 'name');
 
-// Пока поля пусты, кнопка неактивна — клик по ней никуда не ведёт.
-clickButton('go');
-step();
-ok('с пустыми полями ВПЕРЁД! не срабатывает', Game.state.screen === 'name');
+  Game.Input.consume();
+  Game.gotoName();
+  step();
+  ok('при входе в фокусе поле имени', Game.Profile.draft.field === 'name');
+  ok('кнопка ВПЕРЁД! нарисована', !!btn('go'));
 
-// Набор имени: регистр приводится к верхнему, мусор не набирается вовсе.
-'полосатый'.split('').forEach((ch) => key(ch));
-key('!');
-key('#');
-step();
-ok('имя набирается в верхнем регистре, мусор отсеян',
-  Game.Profile.draft.name === 'ПОЛОСАТЫЙ');
+  // Пока поля пусты, кнопка неактивна и жалуется на то поле, что виновато.
+  clickButton('go');
+  await settle();
+  step();
+  ok('с пустыми полями ВПЕРЁД! не пускает дальше', Game.state.screen === 'name');
+  ok('подсвечено поле имени', Game.Profile.draft.badField === 'name');
 
-// Пробел здесь — символ, а не «начать»: экран не должен смениться.
-key(' ');
-'кот'.split('').forEach((ch) => key(ch));
-step();
-ok('пробел печатается, а не начинает игру', Game.state.screen === 'name');
-ok('имя обрезано на 12 символах',
-  Game.Profile.draft.name === 'ПОЛОСАТЫЙ КО' && Game.Profile.draft.name.length === 12);
+  // Набор имени: регистр к верхнему, мусор не набирается вовсе.
+  'полосатый'.split('').forEach((ch) => key(ch));
+  key('!');
+  key('#');
+  step();
+  ok('имя набирается в верхнем регистре, мусор отсеян',
+    Game.Profile.draft.name === 'ПОЛОСАТЫЙ');
+  ok('правка снимает подсветку ошибки', Game.Profile.draft.badField === null);
 
-key('Backspace'); key('Backspace'); key('Backspace');
-step();
-ok('Backspace стирает', Game.Profile.draft.name === 'ПОЛОСАТЫЙ');
+  // Пробел здесь — символ, а не «начать».
+  key(' ');
+  'кот'.split('').forEach((ch) => key(ch));
+  step();
+  ok('пробел печатается, а не начинает игру', Game.state.screen === 'name');
+  ok('имя обрезано на 12 символах',
+    Game.Profile.draft.name === 'ПОЛОСАТЫЙ КО' && Game.Profile.draft.name.length === 12);
 
-// M на этом экране — буква, а не выключение звука (раздел 12 тут не работает).
-const mutedOnName = Game.Sound.isMuted();
-key('m');
-step();
-ok('M — буква, а не выключение звука',
-  Game.Sound.isMuted() === mutedOnName && Game.Profile.draft.name === 'ПОЛОСАТЫЙM');
-key('Backspace');
-step();
+  key('Backspace'); key('Backspace'); key('Backspace');
+  step();
+  ok('Backspace стирает', Game.Profile.draft.name === 'ПОЛОСАТЫЙ');
 
-key('Tab');
-step();
-ok('ТАБ переключает поле', Game.Profile.draft.field === 'pin');
-
-'12а34'.split('').forEach((ch) => key(ch));
-step();
-ok('ПИН принимает только цифры и ровно четыре', Game.Profile.draft.pin === '1234');
-
-key('Enter');
-step();
-ok('ВВОД подтверждает и уводит на онбординг', Game.state.screen === 'onboarding');
-ok('имя и ПИН ушли в хранилище',
-  store['honey-hour.name'] === 'ПОЛОСАТЫЙ' && store['honey-hour.pin'] === '1234');
-
-// Нормализация имени и границы проверок — без экрана, напрямую.
-ok('пробелы по краям режутся, внутренние схлопываются',
-  Game.Profile.normalizeName('  тигр   полосатый  ') === 'ТИГР ПОЛОСАТЫЙ');
-ok('имя короче двух символов не проходит', !Game.Profile.nameValid('я'));
-ok('имя длиннее 12 символов не проходит', !Game.Profile.nameValid('ОЧЕНЬДЛИННОЕИМЯ'));
-ok('латиница и цифры в имени разрешены', Game.Profile.nameValid('tiger42'));
-ok('ПИН из трёх цифр не проходит', !Game.Profile.pinValid('123'));
-ok('ПИН из букв не проходит', !Game.Profile.pinValid('абвг'));
-
-// «СМЕНИТЬ» — второй и единственный другой вход на экран имени.
-ok('на онбординге есть «СМЕНИТЬ»', !!btn('change'));
-clickButton('change');
-step();
-ok('«СМЕНИТЬ» открывает экран имени', Game.state.screen === 'name');
-ok('в черновике текущее имя', Game.Profile.draft.name === 'ПОЛОСАТЫЙ');
-clickButton('go');
-step();
-ok('ВПЕРЁД! возвращает на онбординг', Game.state.screen === 'onboarding');
-
-// Рейтинга ещё нет — кнопка отвечает «СКОРО» и игру не начинает.
-ok('на онбординге есть кнопка РЕЙТИНГ', !!btn('rating'));
-clickButton('rating');
-step();
-ok('РЕЙТИНГ отвечает «СКОРО» и игру не начинает',
-  Game.ui.soon > 0 && Game.state.screen === 'onboarding');
-
-// Возвращаем игру в бой: дальше идёт длинный прогон.
-key('Enter');
-step();
-ok('после экрана имени онбординг по-прежнему начинает игру',
-  Game.state.screen === 'playing');
-
-// --- длинный случайный прогон --------------------------------------------
-console.log('\nдлинный прогон:');
-const DIRS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
-let frames = 0;
-let maxPots = 0;
-let minTick = Infinity;
-
-while (frames < 20000) {
-  frames += 1;
-
-  // Каждый пятый кадр — случайная стрелка, плюс иногда пачка подряд:
-  // проверка «быстрое многократное нажатие не ломает состояние» (раздел 14).
-  if (frames % 5 === 0) key(DIRS[Math.floor(Math.random() * 4)]);
-  if (frames % 37 === 0) { key(DIRS[0]); key(DIRS[3]); key(DIRS[1]); key(DIRS[2]); }
-
+  // M на этом экране — буква, а не выключение звука.
+  const mutedOnName = Game.Sound.isMuted();
+  key('m');
+  step();
+  ok('M — буква, а не выключение звука',
+    Game.Sound.isMuted() === mutedOnName && Game.Profile.draft.name === 'ПОЛОСАТЫЙM');
+  key('Backspace');
   step();
 
-  if (Game.state.screen === 'playing') {
-    maxPots = Math.max(maxPots, Game.state.pots.length);
-    minTick = Math.min(minTick, Game.currentTickMs());
-    if (Game.state.lives < 0 || Game.state.lives > 10) {
-      throw new Error('жизни вышли из диапазона 0..10: ' + Game.state.lives);
-    }
-    if (Game.state.streak < 0 || Game.state.streak >= 10) {
-      throw new Error('стрик вне 0..9: ' + Game.state.streak);
-    }
-    const t = Game.state.tiger;
-    if (!['left', 'right'].includes(t.side) || !['up', 'down'].includes(t.level)) {
-      throw new Error('позиция тигра повреждена: ' + JSON.stringify(t));
-    }
-    for (const p of Game.state.pots) {
-      if (!Game.geometry.STEP_POS[p.chute] || !Game.geometry.STEP_POS[p.chute][p.step]) {
-        throw new Error('горшочек вне геометрии: ' + JSON.stringify(p));
+  key('Tab');
+  step();
+  ok('ТАБ переключает поле', Game.Profile.draft.field === 'pin');
+
+  '12а34'.split('').forEach((ch) => key(ch));
+  step();
+  ok('ПИН принимает только цифры и ровно четыре', Game.Profile.draft.pin === '1234');
+
+  // Подтверждение: запрос уходит, кнопка на время запроса глухая.
+  key('Enter');
+  step();
+  ok('пока идёт проверка — статус «проверяем»',
+    Game.Profile.draft.status === 'checking');
+  ok('во время проверки поля заморожены', (function () {
+    const before = Game.Profile.draft.pin;
+    key('9');
+    return Game.Profile.draft.pin === before;
+  })());
+
+  await settle();
+  step();
+  ok('сети нет — игрок всё равно принят',
+    Game.Profile.draft.status === 'offline' && Game.Profile.hasProfile());
+  ok('имя и ПИН ушли в хранилище',
+    store['honey-hour.name'] === 'ПОЛОСАТЫЙ' && store['honey-hour.pin'] === '1234');
+  ok('экран имени ещё держится, чтобы показать надпись',
+    Game.state.screen === 'name');
+
+  await wait(Game.Profile.NOTICE_MS + 120);
+  step();
+  ok('после надписи игрок уходит на онбординг', Game.state.screen === 'onboarding');
+
+  // Нормализация имени и границы проверок — без экрана, напрямую.
+  ok('пробелы по краям режутся, внутренние схлопываются',
+    Game.Profile.normalizeName('  тигр   полосатый  ') === 'ТИГР ПОЛОСАТЫЙ');
+  ok('имя короче двух символов не проходит', !Game.Profile.nameValid('я'));
+  ok('имя длиннее 12 символов не проходит', !Game.Profile.nameValid('ОЧЕНЬДЛИННОЕИМЯ'));
+  ok('латиница и цифры в имени разрешены', Game.Profile.nameValid('tiger42'));
+  ok('ПИН из трёх цифр не проходит', !Game.Profile.pinValid('123'));
+  ok('ПИН из букв не проходит', !Game.Profile.pinValid('абвг'));
+
+  // «СМЕНИТЬ» — второй и единственный другой вход на экран имени.
+  ok('на онбординге есть «СМЕНИТЬ»', !!btn('change'));
+  clickButton('change');
+  step();
+  ok('«СМЕНИТЬ» открывает экран имени', Game.state.screen === 'name');
+  ok('в черновике текущее имя', Game.Profile.draft.name === 'ПОЛОСАТЫЙ');
+
+  // Esc отменяет смену имени — теперь игроку есть куда возвращаться.
+  key('Escape');
+  step();
+  ok('Esc уводит со смены имени обратно на онбординг',
+    Game.state.screen === 'onboarding');
+
+  // --- рейтинг -------------------------------------------------------------
+  console.log('\nрейтинг:');
+
+  ok('на онбординге есть кнопка РЕЙТИНГ', !!btn('rating'));
+  clickButton('rating');
+  step();
+  ok('РЕЙТИНГ открывает свой экран', Game.state.screen === 'rating');
+  ok('пока грузится — статус «загружаем»',
+    Game.Leaderboard.board.status === 'loading');
+
+  await settle();
+  step();
+  ok('без сети рейтинг честно говорит, что недоступен',
+    Game.Leaderboard.board.status === 'error');
+
+  key('Escape');
+  step();
+  ok('Esc возвращает на онбординг', Game.state.screen === 'onboarding');
+
+  // С гейм-овера рейтинг обязан возвращать на гейм-овер, а не на онбординг:
+  // иначе игрок теряет из виду свой результат.
+  Game.state.screen = 'gameover';
+  Game.state.score = 77;
+  step();
+  clickButton('rating');
+  step();
+  ok('с гейм-овера рейтинг тоже открывается', Game.state.screen === 'rating');
+  clickButton('back');
+  step();
+  ok('«НАЗАД» возвращает именно на гейм-овер', Game.state.screen === 'gameover');
+  ok('счёт партии на месте', Game.state.score === 77);
+
+  // --- длительность партии -------------------------------------------------
+  console.log('\nдлительность партии:');
+
+  Game.Input.consume();
+  Game.state.screen = 'playing';
+  Game.state.score = 0;
+  Game.advanceScreen(); // не сработает на playing — просто убеждаемся, что не сбросит
+  Game.state.screen = 'onboarding';
+  key('Enter');
+  step();
+  ok('партия началась', Game.state.screen === 'playing');
+  ok('время старта засечено', Game.state.startedAt > 0);
+
+  // Подменяем момент старта, чтобы не ждать реальных секунд.
+  Game.state.startedAt = Date.now() - 12345;
+  Game.state.lives = 2;
+  Game.state.tiger = { side: 'left', level: 'up' };
+  Game.state.pots = [{ id: 5000, chute: 0, step: 3, type: 'red' }];
+  let guard2 = 0;
+  while (Game.state.screen === 'playing' && guard2++ < 200) step();
+  ok('гейм-овер наступил', Game.state.screen === 'gameover');
+  ok('длительность партии посчитана в мс',
+    Game.state.playedMs >= 12345 && Game.state.playedMs < 12345 + 5000);
+
+  await settle();
+  ok('отправка счёта без сети игру не роняет', Game.state.screen === 'gameover');
+
+  // --- длинный случайный прогон --------------------------------------------
+  console.log('\nдлинный прогон:');
+  const DIRS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+  let frames = 0;
+  let maxPots = 0;
+  let minTick = Infinity;
+
+  Game.state.screen = 'gameover';
+  while (frames < 20000) {
+    frames += 1;
+
+    // Каждый пятый кадр — случайная стрелка, плюс иногда пачка подряд:
+    // проверка «быстрое многократное нажатие не ломает состояние» (раздел 14).
+    if (frames % 5 === 0) key(DIRS[Math.floor(Math.random() * 4)]);
+    if (frames % 37 === 0) { key(DIRS[0]); key(DIRS[3]); key(DIRS[1]); key(DIRS[2]); }
+
+    step();
+
+    if (Game.state.screen === 'playing') {
+      maxPots = Math.max(maxPots, Game.state.pots.length);
+      minTick = Math.min(minTick, Game.currentTickMs());
+      if (Game.state.lives < 0 || Game.state.lives > 10) {
+        throw new Error('жизни вышли из диапазона 0..10: ' + Game.state.lives);
+      }
+      if (Game.state.streak < 0 || Game.state.streak >= 10) {
+        throw new Error('стрик вне 0..9: ' + Game.state.streak);
+      }
+      const t = Game.state.tiger;
+      if (!['left', 'right'].includes(t.side) || !['up', 'down'].includes(t.level)) {
+        throw new Error('позиция тигра повреждена: ' + JSON.stringify(t));
+      }
+      for (const p of Game.state.pots) {
+        if (!Game.geometry.STEP_POS[p.chute] || !Game.geometry.STEP_POS[p.chute][p.step]) {
+          throw new Error('ханипот вне геометрии: ' + JSON.stringify(p));
+        }
       }
     }
+
+    // Дошли до гейм-овера — ждём паузу и начинаем заново.
+    if (Game.state.screen === 'gameover' && frames % 60 === 0) key('Enter');
   }
 
-  // Дошли до гейм-овера — ждём паузу и начинаем заново.
-  if (Game.state.screen === 'gameover' && frames % 60 === 0) key('Enter');
-}
+  // --- «перезагрузка страницы» (раздел 14) ----------------------------------
+  // Поднимаем игру с нуля поверх того же хранилища: рекорд должен подхватиться
+  // при старте, а не остаться нулём.
+  console.log('\nперезагрузка страницы:');
+  {
+    const before = store['honey-hour.best'];
+    const win2 = {
+      innerWidth: 1280,
+      innerHeight: 800,
+      localStorage: global.window.localStorage, // то же хранилище, что и было
+      addEventListener() {},
+      requestAnimationFrame: () => 1,
+    };
+    const savedRaf = global.requestAnimationFrame;
+    global.requestAnimationFrame = win2.requestAnimationFrame;
+    for (const f of ORDER) {
+      new Function('window', fs.readFileSync(path.join(ROOT, 'src', f), 'utf8'))(win2);
+    }
+    global.requestAnimationFrame = savedRaf;
 
-// --- «перезагрузка страницы» (раздел 14) ----------------------------------
-// Поднимаем игру с нуля поверх того же хранилища: рекорд должен подхватиться
-// при старте, а не остаться нулём.
-console.log('\nперезагрузка страницы:');
-{
-  const before = store['honey-hour.best'];
-  const win2 = {
-    innerWidth: 1280,
-    innerHeight: 800,
-    localStorage: global.window.localStorage, // то же хранилище, что и было
-    addEventListener() {},
-    requestAnimationFrame: () => 1,
-  };
-  const savedRaf = global.requestAnimationFrame;
-  global.requestAnimationFrame = win2.requestAnimationFrame;
-  for (const f of ORDER) {
-    new Function('window', fs.readFileSync(path.join(ROOT, 'src', f), 'utf8'))(win2);
+    ok(`рекорд ${before} подхватился после перезапуска`,
+      String(win2.Game.state.best) === String(before) && win2.Game.state.best > 0);
+
+    ok('имя подхватилось после перезапуска',
+      win2.Game.Profile.profile.name === 'ПОЛОСАТЫЙ' &&
+      win2.Game.Profile.profile.pin === '1234');
+    ok('с сохранённым профилем экран имени больше не показывается',
+      win2.Game.state.screen === 'onboarding');
   }
-  global.requestAnimationFrame = savedRaf;
 
-  ok(`рекорд ${before} подхватился после перезапуска`,
-    String(win2.Game.state.best) === String(before) && win2.Game.state.best > 0);
-
-  ok('имя подхватилось после перезапуска',
-    win2.Game.Profile.profile.name === 'ПОЛОСАТЫЙ' &&
-    win2.Game.Profile.profile.pin === '1234');
-  ok('с сохранённым профилем экран имени больше не показывается',
-    win2.Game.state.screen === 'onboarding');
-}
-
-console.log('');
-console.log('  кадров прогнано:    ' + frames);
-console.log('  максимум горшочков: ' + maxPots + ' (лимит по ТЗ — 5)');
-console.log('  минимальный тик:    ' + minTick + ' мс (нижняя граница — 230)');
-console.log('  рекорд в хранилище: ' + store['honey-hour.best']);
-console.log(failed ? '\nЕСТЬ ПРОВАЛЫ.' : '\nвсё сошлось.');
+  console.log('');
+  console.log('  кадров прогнано:    ' + frames);
+  console.log('  максимум ханипотов: ' + maxPots + ' (лимит по ТЗ — 5)');
+  console.log('  минимальный тик:    ' + minTick + ' мс (нижняя граница — 230)');
+  console.log('  рекорд в хранилище: ' + store['honey-hour.best']);
+  console.log('  сеть недоступна:    ' + netWarnings + ' раз (так и задумано)');
+  console.log(failed ? '\nЕСТЬ ПРОВАЛЫ.' : '\nвсё сошлось.');
+})();

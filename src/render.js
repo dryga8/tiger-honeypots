@@ -329,21 +329,6 @@ window.Game = window.Game || {};
     addButton('sound', SOUND_BTN.x - 2, SOUND_BTN.y - 2, SOUND_BTN.hit, SOUND_BTN.hit);
   }
 
-  // --- Заглушка «СКОРО» ----------------------------------------------------
-  // Рейтинга ещё нет (сети и базы нет вовсе), но кнопка уже должна стоять на
-  // своём месте — иначе потом придётся перекраивать оба экрана. Нажатие
-  // отвечает надписью, а не тишиной. Счётчик — в кадрах, как и эффекты.
-  const SOON_FRAMES = 96;
-  ui.soon = 0;
-
-  function showSoon() {
-    ui.soon = SOON_FRAMES;
-  }
-
-  function tickUI() {
-    if (ui.soon > 0) ui.soon -= 1;
-  }
-
   // --- Строка из текста и спрайтов вперемешку ------------------------------
   // Нужна там, где иконка стоит внутри фразы, а не отдельной колонкой.
   // Спрайт центрируется по высоте строки текста.
@@ -432,7 +417,6 @@ window.Game = window.Game || {};
   // гейм-овере, в одном и том же месте — чтобы её не искали заново.
   function drawRatingButton(ctx, y) {
     const midX = RULE_EFFECT_RIGHT - (textWidth('РЕЙТИНГ', 1) + 16) / 2;
-    if (ui.soon > 0) drawTextMid(ctx, 'СКОРО', midX, y - 10, P.honey);
     drawButton(ctx, 'rating', 'РЕЙТИНГ', midX, y, true);
   }
 
@@ -503,10 +487,11 @@ window.Game = window.Game || {};
   const FIELD_Y_NAME = 58;
   const FIELD_Y_PIN = 80;
 
-  function drawInputField(ctx, id, x, y, w, text, focused, blink) {
+  function drawInputField(ctx, id, x, y, w, text, focused, blink, bad) {
     // Рамка активного поля — медовая: цветом видно, куда пойдёт следующая
-    // буква, даже когда курсор в фазе «погас».
-    ctx.fillStyle = focused ? P.honey : P.wood1;
+    // буква, даже когда курсор в фазе «погас». Красная рамка — поле, которое
+    // не приняли: ругаться текстом, не показав где, бесполезно.
+    ctx.fillStyle = bad ? P.red : focused ? P.honey : P.wood1;
     ctx.fillRect(x - 1, y - 1, w + 2, FIELD_H + 2);
     ctx.fillStyle = P.bg1;
     ctx.fillRect(x, y, w, FIELD_H);
@@ -525,6 +510,7 @@ window.Game = window.Game || {};
   function renderName(ctx, blink) {
     const mid = LOGICAL_W / 2;
     const draft = Game.Profile.draft;
+    const checking = draft.status === 'checking';
     beginUI();
 
     ctx.fillStyle = P.bg0;
@@ -534,21 +520,112 @@ window.Game = window.Game || {};
 
     drawText(ctx, 'ИМЯ', FIELD_LABEL_X, FIELD_Y_NAME + 3, P.white);
     drawInputField(ctx, 'field-name', FIELD_X, FIELD_Y_NAME, FIELD_W_NAME,
-      draft.name, draft.field === 'name', blink);
+      draft.name, !checking && draft.field === 'name', blink,
+      draft.badField === 'name');
 
     drawText(ctx, 'ПИН', FIELD_LABEL_X, FIELD_Y_PIN + 3, P.white);
     drawInputField(ctx, 'field-pin', FIELD_X, FIELD_Y_PIN, FIELD_W_PIN,
-      draft.pin, draft.field === 'pin', blink);
+      draft.pin, !checking && draft.field === 'pin', blink,
+      draft.badField === 'pin');
 
-    // Зачем вообще ПИН — без объяснения поле выглядит лишним препятствием.
-    drawTextMid(ctx, 'ПИН НУЖЕН, ЧТОБЫ ВЕРНУТЬСЯ ПОД', mid, 106, P.wood0);
-    drawTextMid(ctx, 'СВОИМ ИМЕНЕМ С ДРУГОГО КОМПА', mid, 116, P.wood0);
+    // Ответ сервера занимает то же место, что и объяснение про ПИН: так
+    // ничего не прыгает, когда сообщение появляется и исчезает.
+    if (draft.message.length) {
+      const color = draft.status === 'bad' ? P.red : P.honey;
+      for (let i = 0; i < draft.message.length; i++) {
+        drawTextMid(ctx, draft.message[i], mid, 104 + i * 10, color);
+      }
+    } else {
+      // Зачем вообще ПИН — без объяснения поле выглядит лишним препятствием.
+      drawTextMid(ctx, 'ПИН НУЖЕН, ЧТОБЫ ВЕРНУТЬСЯ ПОД', mid, 104, P.wood0);
+      drawTextMid(ctx, 'СВОИМ ИМЕНЕМ С ДРУГОГО КОМПА', mid, 114, P.wood0);
+    }
 
-    drawButton(ctx, 'go', 'ВПЕРЁД!', mid, 136, Game.Profile.draftValid());
+    // Пока идёт запрос — кнопка неактивна и говорит, чего ждём.
+    drawButton(ctx, 'go',
+      checking ? 'ПРОВЕРЯЕМ...' : 'ВПЕРЁД!',
+      mid, 136,
+      !checking && Game.Profile.draftValid());
 
     drawTextMid(ctx, 'ИМЯ 2-12 СИМВОЛОВ, ПИН - 4 ЦИФРЫ', mid, 156, P.wood0);
     // «ТАБ» кириллицей: латинское TAB в этом шрифте неотличимо от «ТАВ».
     drawTextMid(ctx, 'ТАБ - ДРУГОЕ ПОЛЕ, ВВОД - ГОТОВО', mid, 166, P.wood0);
+
+    drawSoundButton(ctx);
+  }
+
+  // --- Рейтинг ------------------------------------------------------------
+  // Таблица на десять строк плюс своя строка, если игрок не в десятке.
+  // Экран открывается и с онбординга, и с гейм-овера и возвращает туда же.
+  const RATE_TOP = 26;
+  const RATE_ROW_H = 10;
+  const RATE_PLACE_RIGHT = 52; // место — правым краем сюда (номера разной длины)
+  const RATE_NAME_X = 60;
+  const RATE_SCORE_RIGHT = 204;
+  const RATE_BAR_X = 26;
+  const RATE_BAR_W = 186;
+
+  // Склонение: 1 очко, 2 очка, 5 очков. Одиннадцать–четырнадцать — исключение,
+  // иначе «11 ОЧКО».
+  function points(n) {
+    const two = n % 100;
+    const one = n % 10;
+    if (two >= 11 && two <= 14) return n + ' ОЧКОВ';
+    if (one === 1) return n + ' ОЧКО';
+    if (one >= 2 && one <= 4) return n + ' ОЧКА';
+    return n + ' ОЧКОВ';
+  }
+
+  function drawRatingRow(ctx, row, y) {
+    // Своя строка — подложкой и медовым цветом. Подложка нужна потому, что
+    // одним цветом строку в плотной таблице глазом не выхватить.
+    if (row.isMe) {
+      ctx.fillStyle = P.bg1;
+      ctx.fillRect(RATE_BAR_X, y - 2, RATE_BAR_W, RATE_ROW_H + 1);
+    }
+
+    const place = String(row.place);
+    const score = String(row.score);
+    const main = row.isMe ? P.honey : P.white;
+
+    drawText(ctx, place, RATE_PLACE_RIGHT - textWidth(place, 1), y,
+      row.isMe ? P.honey : P.wood0);
+    drawText(ctx, row.player, RATE_NAME_X, y, main);
+    drawText(ctx, score, RATE_SCORE_RIGHT - textWidth(score, 1), y, main);
+  }
+
+  function renderRating(ctx) {
+    const mid = LOGICAL_W / 2;
+    const board = Game.Leaderboard.board;
+    beginUI();
+
+    ctx.fillStyle = P.bg0;
+    ctx.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+
+    drawTextMid(ctx, 'РЕЙТИНГ', mid, 8, P.honey, 2);
+
+    if (board.status === 'loading' || board.status === 'idle') {
+      drawTextMid(ctx, 'ЗАГРУЖАЕМ...', mid, 80, P.wood0);
+    } else if (board.status === 'error') {
+      // Сеть отвалилась — это не поломка игры, а отсутствие одной картинки.
+      drawTextMid(ctx, 'РЕЙТИНГ НЕДОСТУПЕН', mid, 76, P.wood0);
+      drawTextMid(ctx, 'ИГРАТЬ ЭТО НЕ МЕШАЕТ', mid, 88, P.wood0);
+    } else if (!board.rows.length) {
+      drawTextMid(ctx, 'ПОКА НИКТО НЕ ИГРАЛ', mid, 80, P.wood0);
+    } else {
+      for (let i = 0; i < board.rows.length; i++) {
+        drawRatingRow(ctx, board.rows[i], RATE_TOP + i * RATE_ROW_H);
+      }
+      // Своя строка отдельно — только если игрок не попал в десятку.
+      if (board.me) {
+        drawTextMid(ctx,
+          'ТЫ: ' + board.me.place + ' МЕСТО, ' + points(board.me.score),
+          mid, 132, P.honey);
+      }
+    }
+
+    drawButton(ctx, 'back', 'НАЗАД', mid, 144, true);
+    drawTextMid(ctx, 'ESC ИЛИ КЛИК', mid, 164, P.wood0);
 
     drawSoundButton(ctx);
   }
@@ -593,6 +670,5 @@ window.Game = window.Game || {};
   Game.renderOnboarding = renderOnboarding;
   Game.renderName = renderName;
   Game.renderGameover = renderGameover;
-  Game.showSoon = showSoon;
-  Game.tickUI = tickUI;
+  Game.renderRating = renderRating;
 })(window.Game);
