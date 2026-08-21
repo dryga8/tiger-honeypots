@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Тигр и ханипоты</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="screen" width="256" height="192"></canvas>
+
+  <!-- Классические скрипты (не модули): чтобы игра запускалась
+       открытием index.html из файловой системы, без сервера.
+       Порядок важен — каждый файл дописывает в глобальный namespace Game. -->
+  <script src="src/palette.js"></script>
+  <script src="src/backdrop.js"></script>
+  <script src="src/sprites.js"></script>
+  <script src="src/storage.js"></script>
+  <script src="src/profile.js"></script>
+  <script src="src/sound.js"></script>
+  <script src="src/input.js"></script>
+  <script src="src/state.js"></script>
+  <script src="src/spawner.js"></script>
+  <script src="src/render.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>

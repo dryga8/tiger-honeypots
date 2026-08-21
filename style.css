@@ -1,0 +1,19 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#screen {
+  /* Целочисленный масштаб выставляется из JS через width/height в стилях.
+     Здесь только запрет сглаживания, чтобы пиксели оставались чёткими. */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
